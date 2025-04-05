@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✨ 시장 분위기 대시보드 (GitHub Pages) ✨</title>
+    <!-- PyScript 로드 -->
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+    <!-- CSS 링크 -->
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>✨ 시장 분위기 대시보드 (PyScript) ✨</h1>
+            <p class="date" id="current-time">로딩 중...</p>
+            <p class="warning">
+                <span class="material-symbols-outlined">warning</span>
+                단순 참고용이며, 실제 투자 결정의 근거로 사용될 수 없습니다. 데이터 지연/오류가 있을 수 있습니다.
+            </p>
+        </header>
+
+        <section class="overall-assessment-section">
+            <div id="overall-assessment-card" class="overall-assessment neutral"> <!-- 기본 중립 상태 -->
+                <div class="assessment-score">
+                    <span>종합 점수</span>
+                    <strong id="total-score" class="score-value">?</strong>
+                </div>
+                <div class="assessment-text">
+                    <h2 id="overall-assessment-text">데이터 로딩 중...</h2>
+                    <p id="overall-explanation" class="explanation">잠시만 기다려 주세요.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="indicators-section">
+            <h2><span class="material-symbols-outlined">monitoring</span> 개별 지표 분석</h2>
+            <!-- 지표 카드들이 동적으로 추가될 영역 -->
+            <div id="indicators-grid" class="indicators-grid">
+                <p id="loading-message">지표 데이터를 로딩하고 분석하는 중입니다...</p>
+            </div>
+        </section>
+
+        <footer>
+            <p class="last-updated">데이터는 페이지 로드 시점에 업데이트됩니다.</p>
+        </footer>
+    </div>
+
+    <!-- PyScript 설정 및 Python 코드 -->
+    <py-config>
+        # 사용할 Python 패키지 명시 (Pyodide/PyScript가 지원하는 것들)
+        packages = ["requests", "pandas"]
+    </py-config>
+
+    <py-script>
+        import asyncio # 비동기 HTTP 요청 위해
+        import json
+        from datetime import datetime
+        import pandas as pd # 필요 시 데이터 처리
+        from pyodide.http import pyfetch # 브라우저 내장 fetch 사용
+        from js import document # JavaScript DOM 객체 접근
+
+        # --- 1. 데이터 가져오기 함수 (PyScript 환경에 맞게 수정) ---
+
+        async def fetch_fear_greed():
+            """ Alternative.me API를 사용하여 Fear & Greed Index 가져오기 """
+            api_url = "https://api.alternative.me/fng/?limit=1&format=json" # format 명시
+            print("Fetching Fear & Greed...")
+            try:
+                response = await pyfetch(url=api_url, method="GET")
+                if response.ok: # status code 200-299
+                    data = await response.json()
+                    if data and 'data' in data and len(data['data']) > 0:
+                        print("Fear & Greed data fetched successfully.")
+                        return int(data['data'][0]['value']), None
+                    else:
+                        return None, "F&G 데이터 형식 오류"
+                else:
+                    return None, f"F&G API 오류 (상태: {response.status})"
+            except Exception as e:
+                print(f"Error fetching Fear & Greed: {e}")
+                return None, f"F&G 요청 오류: {e}"
+
+        # 참고: yfinance, fredapi 라이브러리는 브라우저에서 직접 사용 불가!
+        # 필요한 데이터는 브라우저에서 접근 가능한 공개 API 또는 다른 수단을 사용해야 함.
+        # 예시로 VIX는 구현이 복잡하여 제거하고, 간단한 지표 위주로 구성.
+
+        # --- 2. 데이터 분석 함수 (analyzer.py 내용 통합 및 수정) ---
+
+        def analyze_indicator_pyscript(name, value, error_msg=None, **kwargs):
+            """ PyScript 환경에서 개별 지표 분석 """
+            status, score, color_class, display_value, explanation = "N/A", 0, "neutral", "N/A", "데이터 분석 중..."
+            final_error = error_msg
+
+            if final_error:
+                status, display_value, color_class, explanation, score = f"오류: {final_error}", "오류", 'error', "데이터 오류 발생", 0
+            elif value is None: # 값이 없는 경우 (필수 값 지표)
+                status, display_value, color_class, explanation, score = '데이터 없음', 'N/A', 'neutral', "관련 데이터 없음", 0
+            else:
+                try:
+                    # 예시: Fear & Greed 분석
+                    if name == "Fear & Greed":
+                        explanation = "사람들의 시장 심리 상태 (공포 vs 탐욕). 너무 한쪽으로 치우치면 반대 신호?"
+                        display_value = str(int(value))
+                        if int(value) < 25: status, score, color_class = "매수 고려? (극단적 공포)", 1, 'positive'
+                        elif int(value) > 75: status, score, color_class = "매도 고려? (극단적 탐욕)", -1, 'negative'
+                        else: status, score, color_class = "중립적", 0, 'neutral'
+
+                    # --- 여기에 다른 지표 분석 로직 추가 ---
+                    # 예시: 만약 다른 API로 VIX 값을 가져왔다면...
+                    # elif name == "Volatility (VIX)":
+                    #    explanation = "시장의 불안 정도를 나타내요."
+                    #    display_value = f"{float(value):.2f}"
+                    #    if float(value) > 25: status, score, color_class = "주의 (불안 높음)", -1, 'negative'
+                    #    elif float(value) < 15: status, score, color_class = "안정적", 1, 'positive'
+                    #    else: status, score, color_class = "중립적", 0, 'neutral'
+
+                    # ... (다른 지표 분석 로직 추가 - API 제약 고려) ...
+
+                    else: # 정의되지 않은 지표
+                         display_value = str(value)
+                         status = "분석 불가"
+                         explanation = "이 지표는 현재 분석 로직이 없어요."
+
+                except Exception as e:
+                    status, display_value, color_class, explanation, score = f"분석 오류: {e}", '오류', 'error', "데이터 분석 중 오류", 0
+                    final_error = str(e)
+
+            if final_error or status == '데이터 없음': score = 0
+
+            return {'name': name, 'value': display_value, 'status': status, 'score': score, 'color_class': color_class, 'error': final_error, 'explanation': explanation}
+
+        def get_overall_assessment_pyscript(total_score, num_indicators):
+            """ 종합 점수 기반 최종 평가 (analyzer.py와 유사) """
+            if num_indicators == 0:
+                return "데이터 부족", 'neutral', "분석 가능한 유효 데이터가 부족합니다."
+
+            positive_threshold = max(1, num_indicators // 3) # 기준 완화
+            negative_threshold = -max(1, num_indicators // 3)
+
+            if total_score >= positive_threshold:
+                assessment, color_class, explanation = "시장 분위기: 긍정적 요소 우세 😊", 'positive', "종합적으로 긍정적인 신호가 많아 보입니다."
+            elif total_score <= negative_threshold:
+                assessment, color_class, explanation = "시장 분위기: 주의 필요 요소 우세 😟", 'negative', "주의가 필요한 신호가 상대적으로 많습니다."
+            else:
+                assessment, color_class, explanation = "시장 분위기: 중립적 / 혼조 🤔", 'neutral', "긍정/부정 신호가 혼재되어 방향성 모호."
+
+            return assessment, color_class, explanation
+
+        # --- 3. HTML 업데이트 함수 ---
+
+        def create_indicator_card_html(result):
+            """ 분석 결과를 바탕으로 HTML 카드 문자열 생성 """
+            error_html = f"""
+            <div class="card-footer error-message">
+               <span class="material-symbols-outlined">error</span> 오류: {result['error']}
+            </div>
+            """ if result['error'] else ""
+
+            return f"""
+            <div class="indicator-card {result['color_class']}">
+                <div class="card-header">
+                    <h3 class="indicator-name">{result['name']}</h3>
+                    <span class="indicator-score">({result['score']})</span>
+                </div>
+                <div class="card-body">
+                    <p class="indicator-value">{result['value']}</p>
+                    <p class="indicator-status">{result['status']}</p>
+                    <p class="indicator-explanation">
+                        <span class="material-symbols-outlined">help_outline</span>
+                        {result['explanation']}
+                    </p>
+                </div>
+                {error_html}
+            </div>
+            """
+
+        def update_dashboard(analysis_results, total_score, overall_assessment, overall_color_class, overall_explanation):
+            """ 분석 결과로 HTML 대시보드 내용 업데이트 """
+            # 현재 시간 업데이트
+            now = datetime.now()
+            document.getElementById("current-time").innerText = f"기준 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+
+            # 종합 평가 업데이트
+            overall_card = document.getElementById("overall-assessment-card")
+            overall_card.className = f"overall-assessment {overall_color_class}" # 클래스 변경으로 배경색 적용
+            document.getElementById("total-score").innerText = str(total_score)
+            document.getElementById("overall-assessment-text").innerText = overall_assessment
+            document.getElementById("overall-explanation").innerText = overall_explanation
+
+            # 개별 지표 카드 업데이트
+            grid = document.getElementById("indicators-grid")
+            grid.innerHTML = "" # 기존 내용 삭제
+            if not analysis_results:
+                grid.innerHTML = "<p>분석할 지표 데이터가 없습니다.</p>"
+                return
+
+            for result in analysis_results.values():
+                 card_html = create_indicator_card_html(result)
+                 grid.innerHTML += card_html # 생성된 HTML 추가
+
+            # 로딩 메시지 제거 (필요 시)
+            loading_msg = document.getElementById("loading-message")
+            if loading_msg:
+                loading_msg.style.display = 'none'
+
+
+        # --- 4. 메인 실행 로직 (비동기) ---
+
+        async def main():
+            print("Dashboard update started...")
+            analysis_results = {}
+            total_score = 0
+            num_valid_indicators = 0
+
+            # 데이터 병렬 로딩 시도 (여기서는 순차적 예시)
+            fng_value, fng_err = await fetch_fear_greed()
+            # 다른 비동기 데이터 로딩 함수 호출...
+            # vix_value, vix_err = await fetch_vix_somehow()
+
+            # 분석할 데이터 정의 (API 제약 고려)
+            indicators_data = {
+                "Fear & Greed": {'value': fng_value, 'error': fng_err},
+                # "Volatility (VIX)": {'value': vix_value, 'error': vix_err}, # 예시
+                # ... 더 많은 지표 데이터 ...
+            }
+
+            # 각 지표 분석
+            for name, data in indicators_data.items():
+                # 현재는 추가 kwargs 없음
+                result = analyze_indicator_pyscript(name, data.get('value'), data.get('error'))
+                analysis_results[name] = result
+                if result.get('error') is None and result.get('status') != '데이터 없음':
+                    total_score += result.get('score', 0)
+                    num_valid_indicators += 1
+
+            # 종합 평가
+            overall_assessment, overall_color_class, overall_explanation = get_overall_assessment_pyscript(total_score, num_valid_indicators)
+
+            # HTML 업데이트
+            update_dashboard(analysis_results, total_score, overall_assessment, overall_color_class, overall_explanation)
+            print("Dashboard update finished.")
+
+        # 비동기 메인 함수 실행
+        # Pyscript 0.20.0 이후 await 최상위 레벨 지원 확인 필요, 안되면 asyncio.ensure_future 사용
+        try:
+             # asyncio.ensure_future(main()) # 구버전 PyScript 호환성
+             await main() # 최신 PyScript 권장 (await 직접 사용)
+        except Exception as e:
+             print(f"Error during main execution: {e}")
+             # 오류 발생 시 사용자에게 알림
+             grid = document.getElementById("indicators-grid")
+             grid.innerHTML = f"<p style='color:red;'>대시보드 로딩 중 오류가 발생했습니다: {e}</p>"
+             loading_msg = document.getElementById("loading-message")
+             if loading_msg: loading_msg.style.display = 'none'
+
+
+    </py-script>
+</body>
+</html>
